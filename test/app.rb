@@ -9,7 +9,6 @@ post '/play' do
 end
 
 put '/photo' do
-  p request.env
 end
 
 post '/stop' do
