@@ -5,6 +5,20 @@
 (defvar airplay->host nil)
 (defvar airplay->port 7000)
 
+(defconst airplay->log-buffer "*airplay log*")
+
+(defconst airplay->image-transitions
+  '(
+    :none        "None"
+    :slide_left  "SlideLeft"
+    :slide_right "SlideRight"
+    :dissolve    "Dissolve"
+    ))
+
+(defun airplay/debug-log (fmt &rest args)
+  (with-current-buffer (get-buffer-create airplay->log-buffer)
+    (insert (apply 'format fmt args))))
+
 (defun airplay/net:browse ()
   "Return IP Address of _airplay._tcp service type device.
 If not found device, return nil."
@@ -28,7 +42,7 @@ If not found device, return nil."
       (if (zerop (length response)) nil
         (dns-get 'data (car (dns-get 'additionals (dns-read response))))))))
 
-(defun airplay/net:query (args)
+(defun airplay/protocol:make-query (args)
   (mapconcat
    (lambda (x)
      (concat (url-hexify-string (car x)) "=" (url-hexify-string (cdr x))))
@@ -38,7 +52,7 @@ If not found device, return nil."
   (unless airplay->host
     (setq airplay->host (airplay/net:browse)))
   (format "http://%s:%s%s?%s"
-          airplay->host airplay->port path (airplay/net:query query)))
+          airplay->host airplay->port path (airplay/protocol:make-query query)))
 
 (defun airplay/protocol:make-text-parameters (args)
   (concat
@@ -74,59 +88,88 @@ eg.
 Returns the XML list. see `xml-parse-region'"
   (xml-parse-region (point-min) (point-max)))
 
-(defun* airplay/net:retrieve (method path &rest settings
-                                     &key
-                                     (query  nil)
-                                     (body   nil)
-                                     (callee nil)
-                                     (response-type nil))
+(defun* airplay/net:send (method path &rest settings
+                                 &key
+                                 (header nil)
+                                 (query  nil)
+                                 (body   nil))
   (let* ((query  (plist-get settings :query))
          (body   (plist-get settings :body))
-         (callee (plist-get settings :callee))
+         (header (plist-get settings :header))
+         (url-request-method method)
+         (url-request-data body)
+         (url-request-extra-headers header)
+         (url (airplay/protocol:make-path path query)))
+    (lexical-let ((method method) (path path) (url url))
+      (url-retrieve
+       url
+       (lambda (s)
+         (url-http-parse-headers)
+         (unless (eq 200 url-http-response-status)
+           (airplay/debug-log
+            "airplat/net:send [method: %s] [path: %s] [response:%d]\n"
+            method path url-http-response-status)))))))
+
+(defun* airplay/net:receive (method path &rest settings
+                                    &key
+                                    (query  nil)
+                                    (response-type nil))
+  (let* ((query  (plist-get settings :query))
          (type   (plist-get settings :response-type))
          (parser (cond
                   ((eq type 'xml) 'airplay/protocol:parse-xml)
                   ((eq type 'params) 'airplay/protocol:parse-text-parameters)
                   (t (lambda () (buffer-string)))))
          (url-request-method method)
-         (url-request-data body)
-         (url (airplay/protocol:make-path path query)))
-    (lexical-let ((callee (or callee (lambda (s m))))
-                  (parser parser))
-      (url-retrieve
-       url
-       (lambda (s)
-         (url-http-parse-response)
-         (url-http-parse-headers)
-         (let ((status  url-http-response-status)
-               response)
-           (save-excursion
-             (delete-region (point-min) url-http-end-of-headers)
-             (goto-char (point-min))
-             (setq response (funcall parser))
-             (funcall callee status response))))))))
+         (url (airplay/protocol:make-path path query))
+         response)
+    (with-current-buffer (url-retrieve-synchronously url)
+      (url-http-parse-headers)
+      (if (eq 200 url-http-response-status)
+          (save-excursion
+            (delete-region (point-min) url-http-end-of-headers)
+            (goto-char (point-min))
+            (setq response (funcall parser)))
+        (airplay/debug-log
+         "airplat/net:receive [method: %s] [path: %s] [response:%d]\n"
+         method path url-http-response-status))
+      (kill-buffer (current-buffer)))
+    response))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; HTTP Method                                  ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun airplay/protocol:get (path &rest args)
-  (apply 'airplay/net:retrieve "GET" path args))
+  (apply 'airplay/net:receive "GET" path args))
 
 (defun airplay/protocol:post (path &rest args)
-  (apply 'airplay/net:retrieve "POST" path args))
+  (apply 'airplay/net:send "POST" path args))
 
 (defun airplay/protocol:put (path &rest args)
-  (apply 'airplay/net:retrieve "PUT" path args))
+  (apply 'airplay/net:send "PUT" path args))
 
-(defun airplay:send_image (image_file)
-  (airplay/protocol:put "/photo"
-                        :body (with-temp-buffer
-                                (insert-file-contents-literally image_file)
-                                (buffer-string))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; User API                                     ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun airplay:send_image (image_file &optional transition)
+  (let* ((transition (or transition :none))
+         (transition_val (or (plist-get airplay->image-transitions transition)
+                             (plist-get airplay->image-transitions :none))))
+    (airplay/protocol:put "/photo"
+                          :header `(("X-Apple-Transition" . ,transition_val))
+                          :body (with-temp-buffer
+                                  (insert-file-contents-literally image_file)
+                                  (buffer-string)))))
 
 (defun airplay:stop ()
   (airplay/protocol:post "/stop"))
 
 (defun airplay:server_info ()
   (airplay/protocol:get "/server-info"
-                        :callee (lambda (status response) (buffer-string))
                         :response-type 'xml))
 
 (defun airplay:send_video (video_location)
@@ -141,18 +184,14 @@ Returns the XML list. see `xml-parse-region'"
 
 (defun airplay:get_scrub ()
   (airplay/protocol:get "/scrub"
-                        :response-type 'params
-                        :callee (lambda (status response)
-                                  (message (buffer-string)))))
+                        :response-type 'params))
 
 (defun airplay:scrub (&optional position)
   (if position (airplay:set_scrub position) (airplay:get_scrub)))
 
 (defun airplay:playback-info ()
   (airplay/protocol:get "/playback-info"
-                        :response-type 'xml
-                        :callee (lambda (status response)
-                                  (message (buffer-string)))))
+                        :response-type 'xml))
 
 (provide 'airplay)
 
@@ -160,6 +199,11 @@ Returns the XML list. see `xml-parse-region'"
 ;; (airplay:stop)
 ;; (airplay:send_video "http://ia600409.us.archive.org/27/items/MIT18.01JF07/ocw-18.01-f07-lec01_300k.mp4")
 ;; (airplay:send_image "~/Desktop/jobs.jpg")
+;; (airplay:send_image "~/Desktop/jobs.jpg" :none)
+;; (airplay:send_image "~/Desktop/jobs.jpg" :slide_left)
+;; (airplay:send_image "~/Desktop/jobs.jpg" :slide_right)
+;; (airplay:send_image "~/Desktop/jobs.jpg" :dissolve)
 ;; (airplay:scrub)
-;; (airplay:scrub "2999")
+;; (airplay:scrub "3082")
 ;; (airplay:playback-info)
+
