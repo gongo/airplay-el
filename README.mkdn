@@ -39,10 +39,21 @@ Play movie file (via HTTP)
 (airplay/video:scrub)
   ;; => (message "38.011/90.000")
 
-(airplay/video:scrub "20")
-  ;; => seek to 20 seconds in playing video.
+(airplay/video:info)
+  ;; => (message "Playing now!!")
 
 (airplay:stop)
+
+(airplay/video:info)
+  ;; => (message "Not playing...")
+```
+
+### Control
+
+```lisp
+(airplay/video:pause)
+(airplay/video:resume)
+(airplay/video:scrub "20") ;; => seek to 20 seconds in playing video.
 ```
 
 ## Useful methods
@@ -59,13 +70,6 @@ If want to specify, following code.
 ```lisp
 (setq airplay->host "192.168.0.10")
 (setq airplay->port 7000)
-```
-
-### Other
-
-```lisp
-(airplay:playback-info)
-  ;; => (message "Playing now!!") or (message "Not playing...")
 ```
 
 ## LICENSE

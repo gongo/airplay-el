@@ -31,63 +31,6 @@
 
 ;; A client for AirPlay Server.
 
-;;; Usage:
-
-;;
-;; (require 'airplay)
-;;
-;; browsing Apple TV in LAN
-;;
-;;   (airplay/device:browse) ;; => ("192.168.0.10" . 7000)
-;;                           ;; if cannot find , (nil . nil)
-;;
-;;   If want to specify, following code.
-;;
-;;   (setq airplay->host "192.168.0.10")
-;;   (setq airplay->port 7000)
-;;
-;; View picture file (at local machine)
-;;
-;;   (airplay/image:view "~/Desktop/jobs.jpg")
-;;   (airplay/image:view "~/Desktop/jobs.jpg" :slide_left)
-;;   (airplay/image:view "~/Desktop/jobs.jpg" :slide_right)
-;;   (airplay/image:view "~/Desktop/jobs.jpg" :dissolve)
-;;
-;; Play movie file (via HTTP)
-;;
-;;   (airplay/video:view "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
-;;
-;; If want to stop picture or movie
-;;
-;;   (airplay:stop)
-;;
-;; Other API
-;;
-;;   (airplay/video:scrub)
-;;     ;; => (message "38.011/90.000")
-;;
-;;   (airplay/video:scrub "20")
-;;     ;; => seek to 20 seconds in playing video.
-;;
-;;   (airplay:playback-info)
-;;     ;; => (message "Playing now!!") or (message "Not playing...")
-;;
-;; Advance.
-;;
-;;   (deferred:$
-;;     (deferred:next
-;;       (lambda ()
-;;         (airplay/image:view "~/Desktop/jobs.jpg" :slide_left)))
-;;     (deferred:wait 1000)
-;;     (deferred:nextc it
-;;       (lambda (s)
-;;         (airplay/image:view "~/Desktop/jobs.jpg" :slide_right)))
-;;     (deferred:wait 2000)
-;;     (deferred:nextc it
-;;       (lambda (s)
-;;         (airplay:stop))))
-;;
-
 ;;; Code:
 
 (eval-when-compile (require 'cl))
@@ -253,25 +196,11 @@ Returns the XML list."
           `(("Content-Location" . ,video_location)
             ("Start-Position"   . "0.0")))))
 
-(defun airplay:set_scrub (position)
-  (airplay/protocol:post
-   "scrub"
-   :params `(("position" . ,position))))
-
-(defun airplay:get_scrub ()
-  (airplay/protocol:get
-   "scrub"
-   :parser 'airplay/protocol:parse-text-parameters
-   :success (function*
-             (lambda (&key data &allow-other-keys)
-               (let ((position (cdr (assoc "position" data)))
-                     (duration (cdr (assoc "duration" data))))
-                 (message (format "%s/%s" position duration)))))))
-
 (defun airplay/video:scrub (&optional position)
-  (if position (airplay:set_scrub position) (airplay:get_scrub)))
+  (if position (airplay/video:--set_scrub position)
+    (airplay/video:--get_scrub)))
 
-(defun airplay:playback-info (&optional callback)
+(defun airplay/video:info (&optional callback)
   (lexical-let
       ((callback (or callback
                      (lambda (data)
@@ -284,5 +213,33 @@ Returns the XML list."
      :success (function*
                (lambda (&key data &allow-other-keys)
                  (funcall callback data))))))
+
+(defun airplay/video:pause ()
+  (interactive)
+  (airplay/video:--rate "0"))
+
+(defun airplay/video:resume ()
+  (interactive)
+  (airplay/video:--rate "1"))
+
+(defun airplay/video:--rate (value)
+  (airplay/protocol:post
+   "rate"
+   :params `(("value" . ,value))))
+
+(defun airplay/video:--set_scrub (position)
+  (airplay/protocol:post
+   "scrub"
+   :params `(("position" . ,position))))
+
+(defun airplay/video:--get_scrub ()
+  (airplay/protocol:get
+   "scrub"
+   :parser 'airplay/protocol:parse-text-parameters
+   :success (function*
+             (lambda (&key data &allow-other-keys)
+               (let ((position (cdr (assoc "position" data)))
+                     (duration (cdr (assoc "duration" data))))
+                 (message (format "%s/%s" position duration)))))))
 
 (provide 'airplay)
