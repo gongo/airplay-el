@@ -1,6 +1,100 @@
-(require 'url-http)
+;;; airplay.el --- Airplay bindings to Emacs
+
+;; Copyright (C) 2013 by Wataru MIYAGUNI
+
+;; Author: Wataru MIYAGUNI <gonngo@gmail.com>
+;; URL: https://github.com/gongo/airplay-el
+;; Version: 0.01
+;; Package-Requires: ((request "20130110.2144"))
+
+;; MIT License
+;;
+;; Permission is hereby granted, free of charge, to any person obtaining a copy
+;; of this software and associated documentation files (the "Software"), to deal
+;; in the Software without restriction, including without limitation the rights
+;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+;; copies of the Software, and to permit persons to whom the Software is
+;; furnished to do so, subject to the following conditions:
+;;
+;; The above copyright notice and this permission notice shall be included in
+;; all copies or substantial portions of the Software.
+;;
+;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+;; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+;; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+;; THE SOFTWARE.
+
+;;; Commentary:
+
+;; A client for AirPlay Server.
+
+;;; Usage:
+
+;;
+;; (require 'airplay)
+;;
+;; browsing Apple TV in LAN
+;;
+;;   (airplay/device:browse) ;; => ("192.168.0.10" . 7000)
+;;                           ;; if cannot find , (nil . nil)
+;;
+;;   If want to specify, following code.
+;;
+;;   (setq airplay->host "192.168.0.10")
+;;   (setq airplay->port 7000)
+;;
+;; View picture file (at local machine)
+;;
+;;   (airplay:send_image "~/Desktop/jobs.jpg")
+;;   (airplay:send_image "~/Desktop/jobs.jpg" :slide_left)
+;;   (airplay:send_image "~/Desktop/jobs.jpg" :slide_right)
+;;   (airplay:send_image "~/Desktop/jobs.jpg" :dissolve)
+;;
+;; Play movie file (via HTTP)
+;;
+;;   (airplay:send_video "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
+;;
+;; If want to stop picture or movie
+;;
+;;   (airplay:stop)
+;;
+;; Other API
+;;
+;;   (airplay:scrub)
+;;     ;; => (message "38.011/90.000")
+;;
+;;   (airplay:scrub "20")
+;;     ;; => seek to 20 seconds in playing video.
+;;
+;;   (airplay:playback-info)
+;;     ;; => (message "Playing now!!") or (message "Not playing...")
+;;
+;; Deferred support
+;;
+;;   (deferred:$
+;;     (deferred:next
+;;       (lambda ()
+;;         (airplay:send_image "~/Desktop/jobs.jpg" :slide_left)))
+;;     (deferred:wait 1000)
+;;     (deferred:nextc it
+;;       (lambda (s)
+;;         (airplay:send_image "~/Desktop/jobs.jpg" :slide_right)))
+;;     (deferred:wait 2000)
+;;     (deferred:nextc it
+;;       (lambda (s)
+;;         (airplay:stop))))
+;;
+
+;;; Code:
+
+(eval-when-compile (require 'cl))
 (require 'xml)
 (require 'dns)
+(require 'request)
+(require 'request-deferred)
 
 (defvar airplay->host nil)
 (defvar airplay->port 7000)
@@ -19,9 +113,9 @@
   (with-current-buffer (get-buffer-create airplay->log-buffer)
     (insert (apply 'format fmt args))))
 
-(defun airplay/net:browse ()
-  "Return IP Address of _airplay._tcp service type device.
-If not found device, return nil."
+(defun airplay/device:browse ()
+  "Return IP Address and port of _airplay._tcp service type device.
+If not found device, return (nil . nil)."
   (with-temp-buffer
     (let ((process (make-network-process :name "mdns"
                                          :coding 'binary
@@ -39,20 +133,47 @@ If not found device, return nil."
         (accept-process-output process 5)) ;; wait 5sec
       (setq response (buffer-string))
       (delete-process process)
-      (if (zerop (length response)) nil
-        (dns-get 'data (car (dns-get 'additionals (dns-read response))))))))
+      (if (zerop (length response)) (cons nil nil)
+        (let* ((dns_response (dns-get 'additionals (dns-read response)))
+               (address (dns-get 'data (car dns_response)))
+               (port (dns-get 'port (dns-get 'data (car (last dns_response))))))
+          `(,address . ,port))))))
 
-(defun airplay/protocol:make-query (args)
+(defun airplay/net:request (method path &rest args)
+  (let ((request-backend 'url-retrieve))
+    (apply 'request-deferred (airplay/net:--make-url path) :type method args)))
+
+(defun airplay/net:--make-query (args)
   (mapconcat
    (lambda (x)
      (concat (url-hexify-string (car x)) "=" (url-hexify-string (cdr x))))
    args "&"))
 
-(defun airplay/protocol:make-path (path query)
+(defun airplay/net:--make-url (path)
   (unless airplay->host
-    (setq airplay->host (airplay/net:browse)))
-  (format "http://%s:%s%s?%s"
-          airplay->host airplay->port path (airplay/protocol:make-query query)))
+    (let ((device (airplay/device:browse)))
+      (setq airplay->host (car device))
+      (setq airplay->port (cdr device))))
+  (format "http://%s:%s/%s" airplay->host airplay->port path))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; HTTP Method                                  ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun airplay/protocol:get (path &rest args)
+  (apply 'airplay/net:request "GET" path args))
+
+(defun airplay/protocol:post (path &rest args)
+  (apply 'airplay/net:request "POST" path args))
+
+(defun airplay/protocol:put (path &rest args)
+  (apply 'airplay/net:request "PUT" path args))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Request/Response Content Type Maker/Parser   ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun airplay/protocol:make-text-parameters (args)
   (concat
@@ -83,72 +204,28 @@ eg.
           (forward-line))))
     params))
 
-(defun airplay/protocol:parse-xml ()
+(defun airplay/protocol:parse-plist-xml ()
   "Parse string in current buffer.
-Returns the XML list. see `xml-parse-region'"
-  (xml-parse-region (point-min) (point-max)))
+Assumes \"Apple//DTD PLIST\" ( http://www.apple.com/DTDs/PropertyList-1.0.dtd ) format.
+Returns the XML list."
+  (let ((tree (xml-parse-region (point-min) (point-max))))
+    (airplay/protocol:--parse-plist-xml
+     (assoc 'plist tree))))
 
-(defun* airplay/net:send (method path &rest settings
-                                 &key
-                                 (header nil)
-                                 (query  nil)
-                                 (body   nil))
-  (let* ((query  (plist-get settings :query))
-         (body   (plist-get settings :body))
-         (header (plist-get settings :header))
-         (url-request-method method)
-         (url-request-data body)
-         (url-request-extra-headers header)
-         (url (airplay/protocol:make-path path query)))
-    (lexical-let ((method method) (path path) (url url))
-      (url-retrieve
-       url
-       (lambda (s)
-         (url-http-parse-headers)
-         (unless (eq 200 url-http-response-status)
-           (airplay/debug-log
-            "airplat/net:send [method: %s] [path: %s] [response:%d]\n"
-            method path url-http-response-status)))))))
+(defun airplay/protocol:--parse-plist-xml (top)
+  (let ((kvs (xml-node-children (remove-if 'stringp (assoc 'dict top))))
+        key value kset vset (dict '()))
+    (while kvs
+      (setq kset (pop kvs))
+      (setq vset (pop kvs))
 
-(defun* airplay/net:receive (method path &rest settings
-                                    &key
-                                    (query  nil)
-                                    (response-type nil))
-  (let* ((query  (plist-get settings :query))
-         (type   (plist-get settings :response-type))
-         (parser (cond
-                  ((eq type 'xml) 'airplay/protocol:parse-xml)
-                  ((eq type 'params) 'airplay/protocol:parse-text-parameters)
-                  (t (lambda () (buffer-string)))))
-         (url-request-method method)
-         (url (airplay/protocol:make-path path query))
-         response)
-    (with-current-buffer (url-retrieve-synchronously url)
-      (url-http-parse-headers)
-      (if (eq 200 url-http-response-status)
-          (save-excursion
-            (delete-region (point-min) url-http-end-of-headers)
-            (goto-char (point-min))
-            (setq response (funcall parser)))
-        (airplay/debug-log
-         "airplat/net:receive [method: %s] [path: %s] [response:%d]\n"
-         method path url-http-response-status))
-      (kill-buffer (current-buffer)))
-    response))
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; HTTP Method                                  ;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defun airplay/protocol:get (path &rest args)
-  (apply 'airplay/net:receive "GET" path args))
-
-(defun airplay/protocol:post (path &rest args)
-  (apply 'airplay/net:send "POST" path args))
-
-(defun airplay/protocol:put (path &rest args)
-  (apply 'airplay/net:send "PUT" path args))
+      (setq key (car (xml-node-children kset)))
+      (setq value
+            (if (eq (xml-node-name vset) 'array)
+                (airplay/protocol:--parse-plist-xml (xml-node-children vset))
+              (car (xml-node-children vset))))
+      (setq dict (append dict `((,key . ,value)))))
+    dict))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -159,51 +236,53 @@ Returns the XML list. see `xml-parse-region'"
   (let* ((transition (or transition :none))
          (transition_val (or (plist-get airplay->image-transitions transition)
                              (plist-get airplay->image-transitions :none))))
-    (airplay/protocol:put "/photo"
-                          :header `(("X-Apple-Transition" . ,transition_val))
-                          :body (with-temp-buffer
-                                  (insert-file-contents-literally image_file)
-                                  (buffer-string)))))
+    (airplay/protocol:put
+     "photo"
+     :headers `(("X-Apple-Transition" . ,transition_val))
+     :data (with-temp-buffer
+             (insert-file-contents-literally image_file)
+             (buffer-string)))))
 
 (defun airplay:stop ()
-  (airplay/protocol:post "/stop"))
-
-(defun airplay:server_info ()
-  (airplay/protocol:get "/server-info"
-                        :response-type 'xml))
+  (airplay/protocol:post "stop"))
 
 (defun airplay:send_video (video_location)
-  (airplay/protocol:post "/play"
-                         :body (airplay/protocol:make-text-parameters
-                                `(("Content-Location" . ,video_location)
-                                  ("Start-Position"   . "0.0")))))
+  (airplay/protocol:post
+   "play"
+   :data (airplay/protocol:make-text-parameters
+          `(("Content-Location" . ,video_location)
+            ("Start-Position"   . "0.0")))))
 
 (defun airplay:set_scrub (position)
-  (airplay/protocol:post "/scrub"
-                         :query `(("position" . ,position))))
+  (airplay/protocol:post
+   "scrub"
+   :params `(("position" . ,position))))
 
 (defun airplay:get_scrub ()
-  (airplay/protocol:get "/scrub"
-                        :response-type 'params))
+  (airplay/protocol:get
+   "scrub"
+   :parser 'airplay/protocol:parse-text-parameters
+   :success (function*
+             (lambda (&key data &allow-other-keys)
+               (let ((position (cdr (assoc "position" data)))
+                     (duration (cdr (assoc "duration" data))))
+                 (message (format "%s/%s" position duration)))))))
 
 (defun airplay:scrub (&optional position)
   (if position (airplay:set_scrub position) (airplay:get_scrub)))
 
-(defun airplay:playback-info ()
-  (airplay/protocol:get "/playback-info"
-                        :response-type 'xml))
+(defun airplay:playback-info (&optional callback)
+  (lexical-let
+      ((callback (or callback
+                     (lambda (data)
+                       (if (null data)
+                           (message "Not playing...")
+                         (message "Playing now!"))))))
+    (airplay/protocol:get
+     "playback-info"
+     :parser 'airplay/protocol:parse-plist-xml
+     :success (function*
+               (lambda (&key data &allow-other-keys)
+                 (funcall callback data))))))
 
 (provide 'airplay)
-
-;; (airplay:server_info)
-;; (airplay:stop)
-;; (airplay:send_video "http://ia600409.us.archive.org/27/items/MIT18.01JF07/ocw-18.01-f07-lec01_300k.mp4")
-;; (airplay:send_image "~/Desktop/jobs.jpg")
-;; (airplay:send_image "~/Desktop/jobs.jpg" :none)
-;; (airplay:send_image "~/Desktop/jobs.jpg" :slide_left)
-;; (airplay:send_image "~/Desktop/jobs.jpg" :slide_right)
-;; (airplay:send_image "~/Desktop/jobs.jpg" :dissolve)
-;; (airplay:scrub)
-;; (airplay:scrub "3082")
-;; (airplay:playback-info)
-
