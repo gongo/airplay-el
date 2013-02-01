@@ -1,3 +1,73 @@
 # Airplay for Emacs
 
-coming sooooooooooooooon....
+A client for AirPlay Server.
+
+## Basic Usage
+
+```lisp
+(require 'airplay)
+
+(airplay/image:view "appletv.jpg")
+(airplay/video:view "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
+```
+
+## Sending Images
+
+Select picture file (at local machine).
+
+```lisp
+(airplay/image:view "appletv.jpg")
+(airplay:stop)
+```
+
+### Transitions
+
+```lisp
+(airplay/image:view "appletv.jpg" :none) ;; same no args.
+(airplay/image:view "appletv.jpg" :slide_left)
+(airplay/image:view "appletv.jpg" :slide_right)
+(airplay/image:view "appletv.jpg" :dissolve)
+```
+
+## Play video
+
+Play movie file (via HTTP)
+
+```lisp
+(airplay/video:view "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
+
+(airplay/video:scrub)
+  ;; => (message "38.011/90.000")
+
+(airplay/video:scrub "20")
+  ;; => seek to 20 seconds in playing video.
+
+(airplay:stop)
+```
+
+## Useful methods
+
+### Browsing Apple TV in LAN
+
+```lisp
+(airplay/device:browse) ;; => ("192.168.0.10" . 7000)
+                        ;; if cannot find , (nil . nil)
+```
+
+If want to specify, following code.
+
+```lisp
+(setq airplay->host "192.168.0.10")
+(setq airplay->port 7000)
+```
+
+### Other
+
+```lisp
+(airplay:playback-info)
+  ;; => (message "Playing now!!") or (message "Not playing...")
+```
+
+## LICENSE
+
+MIT License. see airplay.el

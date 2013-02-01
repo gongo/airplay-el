@@ -63,16 +63,16 @@
 ;;
 ;; Other API
 ;;
-;;   (airplay:scrub)
+;;   (airplay/video:scrub)
 ;;     ;; => (message "38.011/90.000")
 ;;
-;;   (airplay:scrub "20")
+;;   (airplay/video:scrub "20")
 ;;     ;; => seek to 20 seconds in playing video.
 ;;
 ;;   (airplay:playback-info)
 ;;     ;; => (message "Playing now!!") or (message "Not playing...")
 ;;
-;; Deferred support
+;; Advance.
 ;;
 ;;   (deferred:$
 ;;     (deferred:next
@@ -268,7 +268,7 @@ Returns the XML list."
                      (duration (cdr (assoc "duration" data))))
                  (message (format "%s/%s" position duration)))))))
 
-(defun airplay:scrub (&optional position)
+(defun airplay/video:scrub (&optional position)
   (if position (airplay:set_scrub position) (airplay:get_scrub)))
 
 (defun airplay:playback-info (&optional callback)
