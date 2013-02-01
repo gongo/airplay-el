@@ -48,14 +48,14 @@
 ;;
 ;; View picture file (at local machine)
 ;;
-;;   (airplay:send_image "~/Desktop/jobs.jpg")
-;;   (airplay:send_image "~/Desktop/jobs.jpg" :slide_left)
-;;   (airplay:send_image "~/Desktop/jobs.jpg" :slide_right)
-;;   (airplay:send_image "~/Desktop/jobs.jpg" :dissolve)
+;;   (airplay/image:view "~/Desktop/jobs.jpg")
+;;   (airplay/image:view "~/Desktop/jobs.jpg" :slide_left)
+;;   (airplay/image:view "~/Desktop/jobs.jpg" :slide_right)
+;;   (airplay/image:view "~/Desktop/jobs.jpg" :dissolve)
 ;;
 ;; Play movie file (via HTTP)
 ;;
-;;   (airplay:send_video "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
+;;   (airplay/video:view "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
 ;;
 ;; If want to stop picture or movie
 ;;
@@ -77,11 +77,11 @@
 ;;   (deferred:$
 ;;     (deferred:next
 ;;       (lambda ()
-;;         (airplay:send_image "~/Desktop/jobs.jpg" :slide_left)))
+;;         (airplay/image:view "~/Desktop/jobs.jpg" :slide_left)))
 ;;     (deferred:wait 1000)
 ;;     (deferred:nextc it
 ;;       (lambda (s)
-;;         (airplay:send_image "~/Desktop/jobs.jpg" :slide_right)))
+;;         (airplay/image:view "~/Desktop/jobs.jpg" :slide_right)))
 ;;     (deferred:wait 2000)
 ;;     (deferred:nextc it
 ;;       (lambda (s)
@@ -101,7 +101,7 @@
 
 (defconst airplay->log-buffer "*airplay log*")
 
-(defconst airplay->image-transitions
+(defconst airplay/image->transitions
   '(
     :none        "None"
     :slide_left  "SlideLeft"
@@ -232,10 +232,10 @@ Returns the XML list."
 ;; User API                                     ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun airplay:send_image (image_file &optional transition)
+(defun airplay/image:view (image_file &optional transition)
   (let* ((transition (or transition :none))
-         (transition_val (or (plist-get airplay->image-transitions transition)
-                             (plist-get airplay->image-transitions :none))))
+         (transition_val (or (plist-get airplay/image->transitions transition)
+                             (plist-get airplay/image->transitions :none))))
     (airplay/protocol:put
      "photo"
      :headers `(("X-Apple-Transition" . ,transition_val))
@@ -246,7 +246,7 @@ Returns the XML list."
 (defun airplay:stop ()
   (airplay/protocol:post "stop"))
 
-(defun airplay:send_video (video_location)
+(defun airplay/video:view (video_location)
   (airplay/protocol:post
    "play"
    :data (airplay/protocol:make-text-parameters
