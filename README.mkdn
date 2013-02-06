@@ -8,7 +8,7 @@ A client for AirPlay Server.
 (require 'airplay)
 
 (airplay/image:view "appletv.jpg")
-(airplay/video:view "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
+(airplay/video:play "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
 ```
 
 ## Sending Images
@@ -31,13 +31,15 @@ Select picture file (at local machine).
 
 ## Play video
 
-Play movie file (via HTTP)
+Play movie file (via HTTP, and local file.)
 
 ```lisp
-(airplay/video:view "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
+(airplay/video:play "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
+(airplay/video:play "~/Dropbox/Public/IMG_0381XXX.m4v")
 
-(airplay/video:scrub)
-  ;; => (message "38.011/90.000")
+(airplay/video:scrub (lambda (position duration)
+                       (message "%s / %s" position duration)))
+  ;; => "38.0 / 90.0"
 
 (airplay/video:info)
   ;; => (message "Playing now!!")
@@ -53,7 +55,7 @@ Play movie file (via HTTP)
 ```lisp
 (airplay/video:pause)
 (airplay/video:resume)
-(airplay/video:scrub "20") ;; => seek to 20 seconds in playing video.
+(airplay/video:seek 20) ;; => seek to 20 seconds in playing video.
 ```
 
 ## Useful methods

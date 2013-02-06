@@ -38,9 +38,15 @@
 (require 'dns)
 (require 'request)
 (require 'request-deferred)
+(require 'simple-httpd)
 
 (defvar airplay->host nil)
 (defvar airplay->port 7000)
+
+(defvar airplay/video->server-daemon-name "airplay-server")
+(defvar airplay/video->server-port 7070)
+(defvar airplay/video->server-lisp-name "airplay-video-server.el")
+(defvar airplay/video->server-buffer "*airplay-server*")
 
 (defconst airplay->log-buffer "*airplay log*")
 
@@ -81,6 +87,28 @@ If not found device, return (nil . nil)."
                (address (dns-get 'data (car dns_response)))
                (port (dns-get 'port (dns-get 'data (car (last dns_response))))))
           `(,address . ,port))))))
+
+(defun airplay/device:--available-my-network-list ()
+  "Return an alist of link up network interfaces and their network address
+excluded \"127.0.0.1\".
+wrapped `network-interface-list'"
+  (let (name address flag)
+    (remove-if
+     (lambda (ifs)
+       (setq name (car ifs))
+       (setq address (format-network-address (cdr ifs) t))
+       (setq flag (nth 4 (network-interface-info (car ifs))))
+       (when (and (memq 'up flag)
+                  (equal "127.0.0.1" address)) t))
+     (network-interface-list))))
+
+(defun airplay/device:client-ip ()
+  (format-network-address
+   (cdr
+    (let* ((ifaces (airplay/device:--available-my-network-list))
+           (ifaces-vector (apply 'vector ifaces)))
+      (elt (shuffle-vector ifaces-vector) 0)))
+   t))
 
 (defun airplay/net:request (method path &rest args)
   (let ((request-backend 'url-retrieve))
@@ -172,6 +200,32 @@ Returns the XML list."
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Video server                                 ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun airplay/server:boot (video)
+  (airplay/server:shutdown)
+  (let ((self (concat invocation-directory invocation-name))
+        (load-httpd-el (find-library-name "simple-httpd"))
+        (load-server-el (concat (file-name-directory (or
+                                                      buffer-file-name
+                                                      load-file-name))
+                                airplay/video->server-lisp-name))
+        (port airplay/video->server-port))
+    (call-process self nil nil nil
+                  "-Q"
+                  (concat "--daemon=" airplay/video->server-daemon-name)
+                  "-l" load-httpd-el
+                  "-l" load-server-el
+                  "--eval" (format  "(setq httpd-port %d)" port))
+    (server-eval-at airplay/video->server-daemon-name
+                    `(airplay/server:start ,video))))
+
+(defun airplay/server:shutdown ()
+  (when (server-running-p airplay/video->server-daemon-name)
+    (server-eval-at airplay/video->server-daemon-name '(kill-emacs))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; User API                                     ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -187,18 +241,75 @@ Returns the XML list."
              (buffer-string)))))
 
 (defun airplay:stop ()
+  (airplay/server:shutdown)
   (airplay/protocol:post "stop"))
 
-(defun airplay/video:view (video_location)
-  (airplay/protocol:post
-   "play"
-   :data (airplay/protocol:make-text-parameters
-          `(("Content-Location" . ,video_location)
-            ("Start-Position"   . "0.0")))))
+(defun airplay/video:play (video_location)
+  (deferred:$
+    (airplay/protocol:post
+     "play"
+     :data (airplay/protocol:make-text-parameters
+            `(("Content-Location" . ,(airplay/video:--video-path video_location))
+              ("Start-Position"   . "0.0"))))
+    (deferred:wait 1500)
+    (deferred:nextc it
+      (deferred:lambda (x)
+        (deferred:$
+          (deferred:parallel 'airplay/video:scrub 'airplay/video:info)
+          (deferred:nextc it
+            (lambda (response)
+              (let* ((scrub-data (request-response-data (nth 0 response)))
+                     (position (string-to-number (cdr (assoc "position" scrub-data))))
+                     (duration (string-to-number (cdr (assoc "duration" scrub-data))))
+                     (info (request-response-data (nth 1 response))))
+                (message "[Test] Progress: %s/%s" position duration)
+                (if (and info (or (> (- duration position) 1.0)
+                                  (= duration 0.0)))
+                    (deferred:nextc (deferred:wait 3000) self)
+                  nil)))))))
+    (deferred:nextc it
+      (lambda (x) (airplay:stop)))))
 
-(defun airplay/video:scrub (&optional position)
-  (if position (airplay/video:--set_scrub position)
-    (airplay/video:--get_scrub)))
+(defun airplay/video:--video-path (location)
+  "Return path that can be played of LOCATION.
+
+If LOCATION is specified local file,
+set up a streaming server on the local
+and returns its address because to play on Apple TV."
+  (when (file-exists-p location)
+    (airplay/server:boot location)
+    (setq location (format "http://%s:%s/"
+                           (airplay/device:client-ip)
+                           airplay/video->server-port)))
+  location)
+
+(defun airplay/video:scrub (&optional cb)
+  "Retrieve the current playback position.
+
+memo: 少し時間を置いて実行すると取得できないときがあるので、2回連続アクセス"
+  (let ((default-cb (lambda (x y))))
+    (lexical-let ((cb (or cb default-cb)))
+      (deferred:$
+        (airplay/video:--scrub default-cb)
+        (deferred:nextc it
+          (lambda (x)
+            (airplay/video:--scrub cb)))))))
+
+(defun airplay/video:--scrub (cb)
+  (lexical-let ((cb cb))
+    (airplay/protocol:get
+     "scrub"
+     :parser 'airplay/protocol:parse-text-parameters
+     :success (function*
+               (lambda (&key data &allow-other-keys)
+                 (let ((position (string-to-number (cdr (assoc "position" data))))
+                       (duration (string-to-number (cdr (assoc "duration" data)))))
+                   (funcall cb position duration)))))))
+
+(defun airplay/video:seek (position)
+  (airplay/protocol:post
+   "scrub"
+   :params `(("position" . ,(number-to-string position)))))
 
 (defun airplay/video:info (&optional callback)
   (lexical-let
@@ -226,20 +337,5 @@ Returns the XML list."
   (airplay/protocol:post
    "rate"
    :params `(("value" . ,value))))
-
-(defun airplay/video:--set_scrub (position)
-  (airplay/protocol:post
-   "scrub"
-   :params `(("position" . ,position))))
-
-(defun airplay/video:--get_scrub ()
-  (airplay/protocol:get
-   "scrub"
-   :parser 'airplay/protocol:parse-text-parameters
-   :success (function*
-             (lambda (&key data &allow-other-keys)
-               (let ((position (cdr (assoc "position" data)))
-                     (duration (cdr (assoc "duration" data))))
-                 (message (format "%s/%s" position duration)))))))
 
 (provide 'airplay)
