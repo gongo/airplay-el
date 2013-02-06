@@ -162,8 +162,7 @@ eg.
   ;; => \"duration: 83.124794\\nposition: 14.467000\\n\"
 
   (airplay/protocol:parse-text-parameters)
-  ;; => ((\"duration\" . \"0.000000\") (\"position\" . \"0.000000\"))
-"
+  ;; => ((\"duration\" . \"83.124794\") (\"position\" . \"14.467000\"))"
   (let ((params '()))
     (save-excursion
       (goto-char (point-min))
@@ -174,6 +173,23 @@ eg.
           (setq params (append params `((,name . ,body))))
           (forward-line))))
     params))
+
+(defun airplay/protocol:parse-scrub ()
+  "\
+Parse string in current buffer.
+Returns the scrub plist.
+
+eg.
+
+  (buffer-string)
+  ;; => \"duration: 83.124794\\nposition: 14.467000\\n\"
+
+  (airplay/protocol:parse-scrub)
+  ;; => '(:duration 83.124794 :position 14.467000)"
+  (let* ((params (airplay/protocol:parse-text-parameters))
+         (position (string-to-number (cdr (assoc "position" params))))
+         (duration (string-to-number (cdr (assoc "duration" params)))))
+    `(:position ,position :duration ,duration)))
 
 (defun airplay/protocol:parse-plist-xml ()
   "Parse string in current buffer.
@@ -259,8 +275,8 @@ Returns the XML list."
           (deferred:nextc it
             (lambda (response)
               (let* ((scrub-data (request-response-data (nth 0 response)))
-                     (position (string-to-number (cdr (assoc "position" scrub-data))))
-                     (duration (string-to-number (cdr (assoc "duration" scrub-data))))
+                     (position (plist-get scrub-data :position))
+                     (duration (plist-get scrub-data :duration))
                      (info (request-response-data (nth 1 response))))
                 (message "[Test] Progress: %s/%s" position duration)
                 (if (and info (or (> (- duration position) 1.0)
@@ -299,11 +315,11 @@ memo: 少し時間を置いて実行すると取得できないときがある�
   (lexical-let ((cb cb))
     (airplay/protocol:get
      "scrub"
-     :parser 'airplay/protocol:parse-text-parameters
+     :parser 'airplay/protocol:parse-scrub
      :success (function*
                (lambda (&key data &allow-other-keys)
-                 (let ((position (string-to-number (cdr (assoc "position" data))))
-                       (duration (string-to-number (cdr (assoc "duration" data)))))
+                 (let ((position (plist-get data :position))
+                       (duration (plist-get data :duration)))
                    (funcall cb position duration)))))))
 
 (defun airplay/video:seek (position)
