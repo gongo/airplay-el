@@ -31,11 +31,10 @@ Select picture file (at local machine).
 
 ## Play video
 
-Play movie file (via HTTP, and local file.)
+Play movie (via HTTP)
 
 ```lisp
 (airplay/video:play "https://dl.dropbox.com/u/2532139/IMG_0381XXX.m4v")
-(airplay/video:play "~/Dropbox/Public/IMG_0381XXX.m4v")
 
 (airplay/video:scrub (lambda (position duration)
                        (message "%s / %s" position duration)))
@@ -48,6 +47,12 @@ Play movie file (via HTTP, and local file.)
 
 (airplay/video:info)
   ;; => (message "Not playing...")
+```
+
+Play local movie file.
+
+```lisp
+(airplay/video:play "~/Dropbox/Public/IMG_0381XXX.m4v")
 ```
 
 ### Control
