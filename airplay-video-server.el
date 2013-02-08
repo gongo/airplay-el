@@ -77,8 +77,3 @@ Assumes \"Partial Responses\" and \"Range Requests\" (RFC 2616)."
       (airplay/server:--response-video proc media request)))
   (httpd-start))
 
-;; (airplay/video:view "http://192.168.0.2:8080/")
-;; (airplay/video:scrub)
-;; (airplay/video:scrub "1200")
-;; (airplay:stop)
-

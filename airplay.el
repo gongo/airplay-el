@@ -36,9 +36,8 @@
 (eval-when-compile (require 'cl))
 (require 'xml)
 (require 'dns)
-(require 'request)
 (require 'request-deferred)
-(require 'simple-httpd)
+(require 'find-func)
 
 (defvar airplay->host nil)
 (defvar airplay->port 7000)
@@ -47,6 +46,8 @@
 (defvar airplay/video->server-port 7070)
 (defvar airplay/video->server-lisp-name "airplay-video-server.el")
 (defvar airplay/video->server-buffer "*airplay-server*")
+
+(defvar airplay/video->playing? nil "a")
 
 (defconst airplay->log-buffer "*airplay log*")
 
@@ -257,34 +258,89 @@ Returns the XML list."
              (buffer-string)))))
 
 (defun airplay:stop ()
+  (setq airplay/video->playing? nil)
   (airplay/server:shutdown)
   (airplay/protocol:post "stop"))
 
 (defun airplay/video:play (video_location)
+  (airplay/protocol:post
+   "play"
+   :data (airplay/protocol:make-text-parameters
+          `(("Content-Location" . ,(airplay/video:--video-path video_location))
+            ("Start-Position"   . "0.0"))))
+  (setq airplay/video->playing? t)
   (deferred:$
-    (airplay/protocol:post
-     "play"
-     :data (airplay/protocol:make-text-parameters
-            `(("Content-Location" . ,(airplay/video:--video-path video_location))
-              ("Start-Position"   . "0.0"))))
-    (deferred:wait 1500)
-    (deferred:nextc it
-      (deferred:lambda (x)
-        (deferred:$
-          (deferred:parallel 'airplay/video:scrub 'airplay/video:info)
-          (deferred:nextc it
-            (lambda (response)
-              (let* ((scrub-data (request-response-data (nth 0 response)))
-                     (position (plist-get scrub-data :position))
-                     (duration (plist-get scrub-data :duration))
-                     (info (request-response-data (nth 1 response))))
-                (message "[Test] Progress: %s/%s" position duration)
-                (if (and info (or (> (- duration position) 1.0)
-                                  (= duration 0.0)))
-                    (deferred:nextc (deferred:wait 3000) self)
-                  nil)))))))
+    (deferred:nextc (airplay/video:--monitoring-buffering)
+      (lambda (x)
+        (cond ((null x) (message "timeout...") nil)
+              ((listp x) (message "error: %s" (nth 2 x)) nil)
+              (x (airplay/video:--monitoring-playback)))))
     (deferred:nextc it
       (lambda (x) (airplay:stop)))))
+
+(defun airplay/video:--monitoring-playback (&optional interval)
+  "Monitored every INTERVAL of the video during playback.
+INTERVAL is 1 second WHEN nil.
+
+Exit the monitor when meet the following requirements.
+
+1. Position is out of range play time
+2. `airplay/video->playing?' is nil
+3. Throw error"
+  (lexical-let ((interval (or interval 1000)))
+    (deferred:next
+      (deferred:lambda (x)
+        (deferred:nextc (airplay/video:scrub)
+          (lambda (data)
+            (let* ((response (request-response-data data))
+                   (position (plist-get response :position))
+                   (duration (plist-get response :duration))
+                   (err (request-response-error-thrown data)))
+              (message "[Test] Progress: %S/%S" position duration)
+              (cond ((or (null position)
+                         (<= position 0)
+                         (>= (+ 1 position) duration)
+                         (not airplay/video->playing?))
+                     nil)
+                    ((and err (not (eq 'http (nth 1 err))))
+                     err)
+                    (t
+                     (deferred:nextc (deferred:wait interval) self))))))))))
+
+(defun airplay/video:--monitoring-buffering (&optional limit interval)
+  "Monitored every INTERVAL of the video during buffering.
+INTERVAL is 1 second WHEN nil.
+
+Exit the monitor when meet the following requirements.
+
+1. Timeout LIMIT sec (default 30 sec).
+2. Position is in play time.
+3. `airplay/video->playing?' is t
+4. Throw error"
+  (lexical-let ((timeout? nil)
+                (interval (or interval 1000)))
+    (let ((limit (or limit 30000))
+          (d (deferred:lambda (x)
+               (deferred:nextc (airplay/video:scrub)
+                 (lambda (data)
+                   (let* ((response (request-response-data data))
+                          (position (plist-get response :position))
+                          (duration (plist-get response :duration))
+                          (err (request-response-error-thrown data)))
+                     (cond ((or timeout? (not airplay/video->playing?))
+                            nil)
+                           ((and err (not (eq 'http (nth 1 err))))
+                            err)
+                           ((or (null position)
+                                (<= position 0)
+                                (>= position duration))
+                            (deferred:nextc (deferred:wait interval) self))
+                           (t t))))))))
+      (deferred:$
+        (deferred:timeout limit nil
+          (deferred:next d))
+        (deferred:nextc it
+          (lambda (x) (setq timeout? t) x))))))
 
 (defun airplay/video:--video-path (location)
   "Return path that can be played of LOCATION.
@@ -300,19 +356,9 @@ and returns its address because to play on Apple TV."
   location)
 
 (defun airplay/video:scrub (&optional cb)
-  "Retrieve the current playback position.
-
-memo: 少し時間を置いて実行すると取得できないときがあるので、2回連続アクセス"
-  (let ((default-cb (lambda (x y))))
-    (lexical-let ((cb (or cb default-cb)))
-      (deferred:$
-        (airplay/video:--scrub default-cb)
-        (deferred:nextc it
-          (lambda (x)
-            (airplay/video:--scrub cb)))))))
-
-(defun airplay/video:--scrub (cb)
-  (lexical-let ((cb cb))
+  "Retrieve the current playback position."
+  (interactive)
+  (lexical-let ((cb (or cb (lambda (x y)))))
     (airplay/protocol:get
      "scrub"
      :parser 'airplay/protocol:parse-scrub
