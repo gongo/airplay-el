@@ -47,7 +47,7 @@
 (defvar airplay/video->server-lisp-name "airplay-video-server.el")
 (defvar airplay/video->server-buffer "*airplay-server*")
 
-(defvar airplay/video->playing? nil "a")
+(defvar airplay/video->playing? nil)
 
 (defconst airplay->log-buffer "*airplay log*")
 
@@ -263,20 +263,31 @@ Returns the XML list."
   (airplay/protocol:post "stop"))
 
 (defun airplay/video:play (video_location)
-  (airplay/protocol:post
-   "play"
-   :data (airplay/protocol:make-text-parameters
-          `(("Content-Location" . ,(airplay/video:--video-path video_location))
-            ("Start-Position"   . "0.0"))))
-  (setq airplay/video->playing? t)
-  (deferred:$
-    (deferred:nextc (airplay/video:--monitoring-buffering)
-      (lambda (x)
-        (cond ((null x) (message "timeout...") nil)
-              ((listp x) (message "error: %s" (nth 2 x)) nil)
-              (x (airplay/video:--monitoring-playback)))))
-    (deferred:nextc it
-      (lambda (x) (airplay:stop)))))
+  (lexical-let ((location video_location))
+    (deferred:$
+      (airplay:stop)
+      (deferred:wait 2000)
+      (deferred:nextc it
+        (lambda (x)
+          (setq airplay/video->playing? t)
+          (airplay/protocol:post
+           "play"
+           :data (airplay/protocol:make-text-parameters
+                  `(("Content-Location" . ,(airplay/video:--video-path location))
+                    ("Start-Position"   . "0.0"))))))
+      (deferred:nextc it
+        (lambda (x)
+          (airplay/video:--monitoring-buffering)))
+      (deferred:nextc it
+        (lambda (x)
+          (cond ((null x) (message "timeout...") nil)
+                ((listp x) (message "error: %s" (nth 2 x)) nil)
+                (x (airplay/video:--monitoring-playback)))))
+      (deferred:error it
+        (lambda (x)
+          (airplay/debug-log "%S" x)))
+      (deferred:nextc it
+        (lambda (x) (airplay:stop))))))
 
 (defun airplay/video:--monitoring-playback (&optional interval)
   "Monitored every INTERVAL of the video during playback.
@@ -316,7 +327,15 @@ Exit the monitor when meet the following requirements.
 1. Timeout LIMIT sec (default 30 sec).
 2. Position is in play time.
 3. `airplay/video->playing?' is t
-4. Throw error"
+4. Throw error
+
+* Memo (sorry, only Japanese) *
+
+動画再生開始中に scrub や playback-info のリクエストを送ると
+何故か 405 Method Not Allowed が返ってくる場合があるが、
+その直後に同じリクエストを送ると問題無いので、そういう仕様なんだろうという予想で
+その場合は無視して監視を続行している。
+"
   (lexical-let ((timeout? nil)
                 (interval (or interval 1000)))
     (let ((limit (or limit 30000))
