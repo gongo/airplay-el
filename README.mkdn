@@ -2,6 +2,16 @@
 
 A client for AirPlay Server.
 
+## Requirements
+
+- Emacs 24 or higher
+
+## Installation
+
+You can install from [MELPA](http://melpa.milkbox.net/) with package.el
+
+    M-x package-install RET airplay
+
 ## Basic Usage
 
 ```lisp
