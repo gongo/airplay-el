@@ -4,8 +4,9 @@
 
 ;; Author: Wataru MIYAGUNI <gonngo@gmail.com>
 ;; URL: https://github.com/gongo/airplay-el
-;; Version: 0.01
-;; Package-Requires: ((request "20130110.2144"))
+;; Keywords: appletv airplay
+;; Version: 0.1.0
+;; Package-Requires: ((request "20130110.2144") (simple-httpd "1.4.1") (deferred "0.3.1"))
 
 ;; MIT License
 ;;
@@ -420,3 +421,5 @@ and returns its address because to play on Apple TV."
    :params `(("value" . ,value))))
 
 (provide 'airplay)
+
+;;; airplay.el ends here
