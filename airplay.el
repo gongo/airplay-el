@@ -247,6 +247,7 @@ Returns the XML list."
 ;; User API                                     ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;;;###autoload
 (defun airplay/image:view (image_file &optional transition)
   (let* ((transition (or transition :none))
          (transition_val (or (plist-get airplay/image->transitions transition)
@@ -258,11 +259,13 @@ Returns the XML list."
              (insert-file-contents-literally image_file)
              (buffer-string)))))
 
+;;;###autoload
 (defun airplay:stop ()
   (setq airplay/video->playing? nil)
   (airplay/server:shutdown)
   (airplay/protocol:post "stop"))
 
+;;;###autoload
 (defun airplay/video:play (video_location)
   (lexical-let ((location video_location))
     (deferred:$
@@ -375,9 +378,9 @@ and returns its address because to play on Apple TV."
                            airplay/video->server-port)))
   location)
 
+;;;###autoload
 (defun airplay/video:scrub (&optional cb)
   "Retrieve the current playback position."
-  (interactive)
   (lexical-let ((cb (or cb (lambda (x y)))))
     (airplay/protocol:get
      "scrub"
@@ -388,11 +391,13 @@ and returns its address because to play on Apple TV."
                        (duration (plist-get data :duration)))
                    (funcall cb position duration)))))))
 
+;;;###autoload
 (defun airplay/video:seek (position)
   (airplay/protocol:post
    "scrub"
    :params `(("position" . ,(number-to-string position)))))
 
+;;;###autoload
 (defun airplay/video:info (&optional callback)
   (lexical-let
       ((callback (or callback
@@ -407,10 +412,12 @@ and returns its address because to play on Apple TV."
                (lambda (&key data &allow-other-keys)
                  (funcall callback data))))))
 
+;;;###autoload
 (defun airplay/video:pause ()
   (interactive)
   (airplay/video:--rate "0"))
 
+;;;###autoload
 (defun airplay/video:resume ()
   (interactive)
   (airplay/video:--rate "1"))
