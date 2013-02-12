@@ -261,6 +261,7 @@ Returns the XML list."
 
 ;;;###autoload
 (defun airplay:stop ()
+  (interactive)
   (setq airplay/video->playing? nil)
   (airplay/server:shutdown)
   (airplay/protocol:post "stop"))
