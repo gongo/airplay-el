@@ -8,7 +8,7 @@ A client for AirPlay Server.
 
 ## Installation
 
-You can install from [MELPA](http://melpa.milkbox.net/) with package.el
+You can install from [MELPA](https://melpa.org/) with package.el
 
     M-x package-install RET airplay
 
